@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Interactive Map</title>
+    <link rel="stylesheet" href="http://cdn.leafletjs.com/leaflet/v1.7.1/leaflet.css"/>
+    <script src="http://cdn.leafletjs.com/leaflet/v1.7.1/leaflet.js"></script>
+    <style>
+        #mapid {
+            height: 100vh;
+        }
+    </style>
+</head>
+<body>
+<div id="mapid"></div>
+<script>
+    var map; // 将map变量声明为全局变量
+    var marker;
+
+    function initMap(lat, lon, zoom) {
+        map = L.map('mapid').setView([lat, lon], zoom);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+        // 定义高亮点形状
+        var redDot = L.divIcon({
+            className: 'custom-div-icon',
+            html: "<div style='background-color:#f03; width:10px; height:10px; border-radius:50%;'></div>",
+            iconSize: [10, 10],
+            iconAnchor: [5, 5]
+        });
+        marker = L.marker([lat, lon], {icon: redDot}).addTo(map);
+    }
+
+    function initMapTrack(gps_coordinates) {
+        var polyline = L.polyline(gps_coordinates, {color: 'blue'}).addTo(map);
+        map.fitBounds(polyline.getBounds());
+    }
+
+    function updateMapWithNewData(lat, lon) {
+        var newLatLng = new L.LatLng(lat, lon);
+        marker.setLatLng(newLatLng);
+        map.setView(newLatLng);
+    }
+</script>
+</body>
+</html>
