@@ -20,6 +20,7 @@ class MapWindow(QMainWindow):
         self.map_slider_position = 0  # 储存对齐时的fit时间，单位fit_gap s
         self.user_is_interacting = True  # 是否是主动更改map slider
         self.fit_is_loaded = False  # fit文件是否被加载进来了（如果未加载则进度条不联动）
+        self.video_is_loaded = False
         self.initUI()
 
     def initUI(self):
@@ -88,13 +89,14 @@ class MapWindow(QMainWindow):
     def initMap(self):
         code = f"initMap({self.gps_coordinates[0][0]}, {self.gps_coordinates[0][1]}, {19});"
         self.map_view.page().runJavaScript(code)
+        print("Map初始化成功")
         code = f"initMapTrack({json.dumps(self.gps_coordinates)});"
         self.map_view.page().runJavaScript(code)
-        print("Map初始化成功")
+        print("Map轨迹初始化成功")
 
     @pyqtSlot(int)
     def sliderMoved(self, position):
-        if self.user_is_interacting:
+        if self.user_is_interacting and self.video_is_loaded:
             self.map_slider_position = position
             self.video_slider_position = self.video_slider.value()
             print(f'map_slider主动更新：当前视频位置{self.video_slider_position / 1000}s,'
@@ -177,6 +179,7 @@ class MapWindow(QMainWindow):
             self.video_layout.removeWidget(self.videoOpenButton)
             self.setupVideoLayout()
             self.loadVideo(video_path=fileName)
+            self.video_is_loaded = True
 
     def togglePlayPause(self):
         if self.video_player.state() == QMediaPlayer.PlayingState:

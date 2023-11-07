@@ -22,6 +22,29 @@
             maxZoom: 19,
             attribution: '© OpenStreetMap contributors'
         }).addTo(map);
+
+        // 高德地图(矢量)
+        // 国内ip访问，GPS偏移
+        // L.tileLayer('http://webrd02.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', {
+        //     attribution: '&copy; 高德地图'
+        // }).addTo(map);
+        // 高德地图(卫星)
+        // L.tileLayer('https://webst01.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}', {
+        //     attribution: '&copy; 高德地图'
+        // }).addTo(map);
+
+        // mapbox
+        // L.tileLayer('https://api.mapbox.com/styles/v1/{id}/tiles/{z}/{x}/{y}?access_token={accessToken}', {
+        //     attribution: 'Map data &copy; <a href="https://www.openstreetmap.org/">OpenStreetMap</a> contributors, ' +
+        //         '<a href="https://creativecommons.org/licenses/by-sa/2.0/">CC-BY-SA</a>, ' +
+        //         'Imagery © <a href="https://www.mapbox.com/">Mapbox</a>',
+        //     maxZoom: 18,
+        //     id: 'mapbox/streets-v11',
+        //     tileSize: 512,
+        //     zoomOffset: -1,
+        //     accessToken: 'YOUR_MAPBOX_ACCESS_TOKEN'
+        // }).addTo(map);
+
         // 定义高亮点形状
         var redDot = L.divIcon({
             className: 'custom-div-icon',
