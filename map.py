@@ -3,11 +3,11 @@ from load_fit import load_fit, get_gps_data
 # PyQt5 imports
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QSlider, QApplication, QHBoxLayout, QPushButton, \
-    QFileDialog, QSplitter, QTabWidget, QLabel, QGraphicsView, QGraphicsScene,QStackedLayout,QFrame
+    QFileDialog, QSplitter, QTabWidget, QLabel, QGraphicsView, QGraphicsScene, QStackedLayout, QFrame
 from PyQt5.QtCore import Qt, QUrl, pyqtSlot, pyqtSignal, QObject, QPoint
 from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
-from PyQt5.QtMultimediaWidgets import QVideoWidget
-from PyQt5.QtGui import QPixmap,QColor, QBrush
+from PyQt5.QtMultimediaWidgets import QVideoWidget, QGraphicsVideoItem
+from PyQt5.QtGui import QPixmap, QColor, QBrush
 from PyQt5.QtSvg import QSvgWidget, QGraphicsSvgItem
 import sys
 import os
@@ -306,44 +306,18 @@ class VideoSvgWidget(QWidget):
         self.create_svg()
         self.splitter.addWidget(self.svgWidget)
 
+    def add_svg_to_video(self, svg_number):
+        self.svgItem = QGraphicsSvgItem('imgs/哑铃2.svg')
+        scaleFactor = 0.2  # 举例为原始SVG尺寸的50%
+        self.svgItem.setScale(scaleFactor)
+        self.svgItem.setPos(0, 0)
+
+        self.scene.addItem(self.svgItem)
+        print(self.scene.items())
+
     # -------------------------------------------------------- #
     # 这里放videoPlayer组件
     # -------------------------------------------------------- #
-    def create_VideoPlayer(self):
-        self.video_player = QMediaPlayer(None, QMediaPlayer.VideoSurface)
-        self.video_widget = QVideoWidget()
-        self.video_player.setVideoOutput(self.video_widget)
-        # Connect signals to slots for video progress and duration updates
-        self.video_player.positionChanged.connect(self.positionChanged)
-        self.video_player.durationChanged.connect(self.durationChanged)
-
-    def create_play_pause_button(self):
-        self.play_pause_button = QPushButton("播放/暂停")
-        self.play_pause_button.setEnabled(False)  # Initially disabled, enabled after video is loaded
-        self.play_pause_button.clicked.connect(self.togglePlayPause)
-
-    def create_openVideoButton(self):
-        self.videoOpenButton = QPushButton('Open Video')
-        self.videoOpenButton.clicked.connect(self.open_video_file)
-        self.create_play_pause_button()
-        self.video_layout.addWidget(self.videoOpenButton)
-
-    def create_VideoSlider(self):
-        self.video_slider = QSlider(Qt.Horizontal)
-        self.video_slider.setRange(0, 0)  # Initial range, will be updated when video is loaded
-        self.video_slider.sliderMoved.connect(self.setPosition)
-
-    def setupVideoLayout(self):
-        self.create_VideoPlayer()
-        self.create_VideoSlider()
-        # step 1. 创建一个装播放暂停+进度条的布局
-        self.video_button_and_slider_layout = QHBoxLayout(self.videoWidget)
-        # step 2. 将video_slider 和 play_pause_button放入布局
-        self.video_button_and_slider_layout.addWidget(self.video_slider)
-        self.video_button_and_slider_layout.addWidget(self.play_pause_button)
-        # step 3. 将video_widget和video_button_and_slider_layout放入布局
-        self.video_layout.addWidget(self.video_widget)
-        self.video_layout.addLayout(self.video_button_and_slider_layout)
 
     # -------------------------------------------------------- #
     # 这里放videoPlayer函数
@@ -351,51 +325,29 @@ class VideoSvgWidget(QWidget):
     def loadVideo(self, video_path):
         # Load the video file into the player
         self.video_player.setMedia(QMediaContent(QUrl.fromLocalFile(video_path)))
-        # Enable the play/pause button now that a video is loaded
-        self.play_pause_button.setEnabled(True)
-        # Optionally, play the video (or you can leave it paused to start)
         self.video_player.play()
         self.video_player.pause()
 
-    def open_video_file(self, fileName):
-        self.video_layout.removeWidget(self.videoOpenButton)
-        self.setupVideoLayout()
-        self.loadVideo(video_path=fileName)
-        self.video_is_loaded = True
-
-    def togglePlayPause(self):
-        if self.video_player.state() == QMediaPlayer.PlayingState:
-            self.video_player.pause()
-        else:
-            self.video_player.play()
-
-    def positionChanged(self, position):
-        self.video_slider.setValue(position)
-
-    def durationChanged(self, duration):
-        self.video_slider.setRange(0, duration)
-
-    def setPosition(self, position):
-        self.video_player.setPosition(position)
-
-    def add_svg_to_video(self, svg_number):
-        print(1, svg_number)
-        # self.svg_item = QGraphicsSvgItem('imgs/哑铃2.svg')
-        # self.scene.addItem(self.svg_item)
-        # # 可以设置SVG项的位置，确保它在视频上方
-        # self.svg_item.setPos(50, 50)  # 举例，将SVG图片放置在场景中的(50, 50)位置
+    def open_video_file(self, video_path):
+        self.loadVideo(video_path)
 
     # -------------------------------------------------------- #
     # 初始化VideoPlayer窗口
     # -------------------------------------------------------- #
     def setupVideoPlayer(self):
         # 创建view窗口
-        self.videoWidget = QWidget()
-        self.video_layout = QVBoxLayout(self.videoWidget)
-        # 创建open Video 按钮
-        self.create_openVideoButton()
-        # 将videoWidget加入splitter
-        self.splitter.addWidget(self.videoWidget)
+        self.scene = QGraphicsScene()
+        self.video_player = QMediaPlayer()
+        self.videoItem = QGraphicsVideoItem()
+        self.videoItem.setScale(2)
+        self.video_player.setVideoOutput(self.videoItem)
+
+        self.scene.addItem(self.videoItem)
+
+        # 创建视图来显示场景
+        self.view = QGraphicsView(self.scene)
+
+        self.splitter.addWidget(self.view)
 
 
 class MainWindow(QMainWindow):
