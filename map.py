@@ -1,49 +1,40 @@
 import json
 from load_fit import load_fit, get_gps_data
+from cv_func import create_power_svg, create_speed_svg, align_video_positoin_and_fit
 # PyQt5 imports
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QSlider, QApplication, QHBoxLayout, QPushButton, \
     QFileDialog, QSplitter, QTabWidget, QLabel, QGraphicsView, QGraphicsScene, QStackedLayout, QFrame
-from PyQt5.QtCore import Qt, QUrl, pyqtSlot, pyqtSignal, QObject, QPoint
+from PyQt5.QtCore import Qt, QUrl, pyqtSlot, pyqtSignal, QObject, QPoint, QPointF
 from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
 from PyQt5.QtMultimediaWidgets import QVideoWidget, QGraphicsVideoItem
-from PyQt5.QtGui import QPixmap, QColor, QBrush
-from PyQt5.QtSvg import QSvgWidget, QGraphicsSvgItem
+from PyQt5.QtGui import QPixmap, QColor, QBrush, QPainter, QTransform
+from PyQt5.QtSvg import QSvgWidget, QGraphicsSvgItem, QSvgRenderer
 import sys
 import os
 
 
-class VideoSignal(QObject):
-    """
-    创建一个信号，传递视频路径。在地图-视频页面打开视频时，svg-视频页面也会打开视频
-    """
+class Signals(QObject):
     videoOpened = pyqtSignal(str)
-
-
-videoSignal = VideoSignal()
-
-
-class SvgSignal(QObject):
-    """
-    创建一个信号，传递svg序号。在地图-视频页面打开视频时，svg-视频页面也会打开视频
-    """
     add_svg_to_Video = pyqtSignal(str)
+    FitOpened = pyqtSignal(str)
+    align = pyqtSignal(float, float)
 
 
-svgSignal = SvgSignal()
+signals = Signals()
 
 
 class MapWidget(QWidget):
-    def __init__(self):
+    def __init__(self, fps, fit_gap):
         super().__init__()
-        self.fps = 30  # 储存fps值，暂时不从视频中读取
-        self.fit_gap = 1  # fit中记录的间隔时间，单位为s
+        self.fps = fps  # 储存fps值，暂时不从视频中读取
+        self.fit_gap = fit_gap  # fit中记录的间隔时间，单位为s
         self.video_slider_position = 0  # 储存对齐时的video时间，单位ms
         self.map_slider_position = 0  # 储存对齐时的fit时间，单位fit_gap s
         self.user_is_interacting = True  # 是否是主动更改map slider
         self.fit_is_loaded = False  # fit文件是否被加载进来了（如果未加载则进度条不联动）
         self.video_is_loaded = False
-        self.videoSignal = videoSignal
+        self.signals = signals
         self.initUI()
 
     def initUI(self):
@@ -104,6 +95,7 @@ class MapWidget(QWidget):
             self.setupMapLayout()
             self.map_layout.removeWidget(self.mapOpenButton)
             self.fit_is_loaded = True
+            self.signals.FitOpened.emit(fileName)
         print('fit文件已打开')
 
     def initMap(self):
@@ -121,6 +113,7 @@ class MapWidget(QWidget):
             self.video_slider_position = self.video_slider.value()
             print(f'map_slider主动更新：当前视频位置{self.video_slider_position / 1000}s,'
                   f' 当前gps位置{self.map_slider_position * self.fit_gap}s')
+            self.signals.align.emit(self.video_slider_position, self.map_slider_position)
         lat = self.gps_coordinates[position][0]
         lon = self.gps_coordinates[position][1]
         self.updateMap(lat, lon)
@@ -201,7 +194,7 @@ class MapWidget(QWidget):
             self.loadVideo(video_path=fileName)
             self.video_is_loaded = True
             # 传递信号给视另一个窗口
-            self.videoSignal.videoOpened.emit(fileName)
+            self.signals.videoOpened.emit(fileName)
 
     def togglePlayPause(self):
         if self.video_player.state() == QMediaPlayer.PlayingState:
@@ -255,17 +248,122 @@ class ClicableSvgWidget(QSvgWidget):
     def clicked(self):
         print("SVG图片被点击了！")
         # 在这里添加你的事件触发逻辑
-        svgSignal.add_svg_to_Video.emit("1")
+        signals.add_svg_to_Video.emit("1")
+
+
+class MyGraphicsView(QGraphicsView):
+    """
+    GraphicView中的 videoItem 可以自主调节大小
+    """
+
+    def __init__(self, videoItem, parent=None):
+        super(MyGraphicsView, self).__init__(parent)
+        self.videoItem = videoItem
+
+    def resizeEvent(self, event):
+        super(MyGraphicsView, self).resizeEvent(event)
+        if self.scene():
+            # 调整videoItem的大小以适应新的视图大小
+            rect = self.mapToScene(self.viewport().rect()).boundingRect()
+            self.videoItem.setSize(rect.size())
+
+
+class DraggableSvgItem(QGraphicsSvgItem):
+    def __init__(self):
+        super(DraggableSvgItem, self).__init__()
+
+        # # 检查 svg_source 是 SVG 数据字符串还是文件路径
+        # if svg_source and svg_source.strip().startswith('<svg'):
+        #     # SVG 数据字符串
+        #     self.renderer = QSvgRenderer(svg_source.encode('utf-8'))
+        # elif svg_source and os.path.isfile(svg_source):
+        #     print(svg_source)
+        #     # 文件路径
+        #     self.renderer = QSvgRenderer(svg_source)
+        # else:
+        #     raise ValueError("svg_source must be SVG data string or a valid file path.")
+        # self.setSharedRenderer(self.renderer)
+        self.setFlags(QGraphicsSvgItem.ItemIsSelectable | QGraphicsSvgItem.ItemIsMovable)
+        self.isDragging = False
+        self.startPos = QPointF()
+        self.currentScale = 1.0  # 初始缩放比例
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.isDragging = True
+            self.startPos = event.pos()
+        super(DraggableSvgItem, self).mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self.isDragging:
+            # 在这里，我们直接移动整个item
+            self.setPos(self.mapToScene(event.pos() - self.startPos))
+        super(DraggableSvgItem, self).mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.isDragging = False
+        super(DraggableSvgItem, self).mouseReleaseEvent(event)
+
+    def wheelEvent(self, event):
+        scaleFactor = 1.1  # 定义缩放的因子
+        if event.delta() > 0:
+            # 放大
+            self.currentScale *= scaleFactor
+        else:
+            # 缩小
+            self.currentScale /= scaleFactor
+
+        # 应用当前的缩放比例
+        transform = QTransform().scale(self.currentScale, self.currentScale)
+        self.setTransform(transform)
+
+        super(DraggableSvgItem, self).wheelEvent(event)
+
+
+class StaticSvgItem(DraggableSvgItem):
+    def __init__(self, file_path):
+        super(StaticSvgItem, self).__init__()
+        if os.path.isfile(file_path):
+            self.renderer = QSvgRenderer(file_path)
+        else:
+            raise ValueError("file_path must be a valid file path.")
+        self.setSharedRenderer(self.renderer)
+
+
+class DynamicSvgItem(DraggableSvgItem):
+    def __init__(self, svg_func, data, init_row=None, **kwargs):
+        super(DynamicSvgItem, self).__init__()
+        self.svg_func = svg_func
+        self.kwargs = kwargs
+        self.data = data
+        self.updateSvg(init_row)  # 使用svg_func初始化
+
+    def updateSvg(self, curr_row):
+        # 使用svg_func生成新的SVG字符串并加载
+        svg_data = self.svg_func(self.data[curr_row], **self.kwargs)
+        self.renderer = QSvgRenderer()
+        self.renderer.load(svg_data.encode('utf-8'))
+        self.setSharedRenderer(self.renderer)
+        self.update()  # 更新视图
 
 
 class VideoSvgWidget(QWidget):
-    def __init__(self):
+    def __init__(self, fps, fit_gap):
         super().__init__()
+        self.fps = fps
+        self.fit_gap = fit_gap
+        self.video_slider_position = 0  # 储存对齐时的video时间，单位ms
+        self.map_slider_position = 0  # 储存对齐时的fit时间，单位fit_gap s
+        self.signals = signals
+        self.signals.videoOpened.connect(self.open_video_file)
+        self.signals.add_svg_to_Video.connect(self.add_svg_to_video)
+        self.signals.FitOpened.connect(self.open_fit_file)
+        self.signals.align.connect(self.update_align)
+        self.svg_in_view = {}
+        self.video_loaded = False
+        self.fit_loaded = False
         self.initUI()
-        self.videoSignal = videoSignal
-        self.videoSignal.videoOpened.connect(self.open_video_file)
-        self.svgSignal = svgSignal
-        self.svgSignal.add_svg_to_Video.connect(self.add_svg_to_video)
 
     def initUI(self):
         self.setupWindowAndLayout()
@@ -279,6 +377,21 @@ class VideoSvgWidget(QWidget):
         self.setWindowTitle("Map and Video Viewer")  # 设定标题
         self.main_layout = QHBoxLayout(self)  # 设定main布局
         self.splitter = QSplitter(Qt.Horizontal)  # 设定splitter（map和视频要等分）
+
+    def update_align(self, video_slider_position, map_slider_position):
+        self.video_slider_position = video_slider_position  # 储存对齐时的video时间，单位ms
+        self.map_slider_position = map_slider_position  # 储存对齐时的fit时间，单位fit_gap s
+
+    def open_fit_file(self, filePath):
+        """
+        打开fit文件
+        :return:
+        """
+        fit_data = load_fit(filePath)
+        # 将速度由m/s换成km/h
+        fit_data['speed'] = fit_data['speed'] * 3.6
+        self.fit_data = fit_data
+        self.fit_loaded = True
 
     def create_svg(self):
         self.svgPic = ClicableSvgWidget(self.svgWidget)
@@ -307,13 +420,44 @@ class VideoSvgWidget(QWidget):
         self.splitter.addWidget(self.svgWidget)
 
     def add_svg_to_video(self, svg_number):
-        self.svgItem = QGraphicsSvgItem('imgs/哑铃2.svg')
-        scaleFactor = 0.2  # 举例为原始SVG尺寸的50%
-        self.svgItem.setScale(scaleFactor)
-        self.svgItem.setPos(0, 0)
+        try:
+            if not self.video_loaded:
+                print("视频未导入")
+                return
+            if not self.fit_loaded:
+                return
+            if svg_number not in self.svg_in_view.keys():
+                fit_row = align_video_positoin_and_fit(aligned_video_position=self.video_slider_position,
+                                                       aligned_fit_position=self.map_slider_position,
+                                                       fit_gap=self.fit_gap,
+                                                       fps=self.fps,
+                                                       curr_video_position=self.video_slider.value())
+                print(fit_row)
+                svgItem = DynamicSvgItem(svg_func=create_power_svg,
+                                         data=list(self.fit_data['power']),
+                                         init_row=fit_row)
+                self.svg_in_view[svg_number] = svgItem
+                scaleFactor = 0.5  # 举例为原始SVG尺寸的50%
+                svgItem.setScale(scaleFactor)
+                svgItem.setPos(500, 500)
+                self.scene.addItem(svgItem)
+        except Exception as e:
+            raise Exception(e)
 
-        self.scene.addItem(self.svgItem)
-        print(self.scene.items())
+    def update_svg(self, position):
+        if not self.fit_loaded:
+            print("fit文件未导入")
+            return
+        if not self.video_loaded:
+            print("视频未导入")
+            return
+        for svgItem in self.svg_in_view.values():
+            fit_row = align_video_positoin_and_fit(aligned_video_position=self.video_slider_position,
+                                                   aligned_fit_position=self.map_slider_position,
+                                                   fit_gap=self.fit_gap,
+                                                   fps=self.fps,
+                                                   curr_video_position=position)
+            svgItem.updateSvg(fit_row)
 
     # -------------------------------------------------------- #
     # 这里放videoPlayer组件
@@ -327,6 +471,8 @@ class VideoSvgWidget(QWidget):
         self.video_player.setMedia(QMediaContent(QUrl.fromLocalFile(video_path)))
         self.video_player.play()
         self.video_player.pause()
+        self.play_pause_button.setEnabled(True)
+        self.video_loaded = True
 
     def open_video_file(self, video_path):
         self.loadVideo(video_path)
@@ -334,25 +480,71 @@ class VideoSvgWidget(QWidget):
     # -------------------------------------------------------- #
     # 初始化VideoPlayer窗口
     # -------------------------------------------------------- #
+    def create_VideoSlider(self):
+        self.video_slider = QSlider(Qt.Horizontal)
+        self.video_slider.setRange(0, 0)  # Initial range, will be updated when video is loaded
+        self.video_slider.sliderMoved.connect(self.setPosition)
+
+    def create_play_pause_button(self):
+        self.play_pause_button = QPushButton("播放/暂停")
+        self.play_pause_button.setEnabled(False)  # Initially disabled, enabled after video is loaded
+        self.play_pause_button.clicked.connect(self.togglePlayPause)
+
+    def togglePlayPause(self):
+        if self.video_player.state() == QMediaPlayer.PlayingState:
+            self.video_player.pause()
+        else:
+            self.video_player.play()
+
+    def positionChanged(self, position):
+        self.video_slider.setValue(position)
+        # 关联 svg update
+        self.update_svg(position)
+
+    def durationChanged(self, duration):
+        self.video_slider.setRange(0, duration)
+
+    def setPosition(self, position):
+        self.video_player.setPosition(position)
+
     def setupVideoPlayer(self):
         # 创建view窗口
+        self.videoWidget = QWidget()
+        self.video_layout = QVBoxLayout(self.videoWidget)
+
         self.scene = QGraphicsScene()
         self.video_player = QMediaPlayer()
         self.videoItem = QGraphicsVideoItem()
-        self.videoItem.setScale(2)
         self.video_player.setVideoOutput(self.videoItem)
+        self.video_player.positionChanged.connect(self.positionChanged)
+        self.video_player.durationChanged.connect(self.durationChanged)
+        self.create_VideoSlider()
+        self.create_play_pause_button()
 
         self.scene.addItem(self.videoItem)
 
         # 创建视图来显示场景
-        self.view = QGraphicsView(self.scene)
+        self.view = MyGraphicsView(self.videoItem, self.scene)
 
-        self.splitter.addWidget(self.view)
+        # step 1. 创建一个装播放暂停+进度条的布局
+        self.video_button_and_slider_layout = QHBoxLayout(self.videoWidget)
+        # step 2. 将video_slider 和 play_pause_button放入布局
+        self.video_button_and_slider_layout.addWidget(self.video_slider)
+        self.video_button_and_slider_layout.addWidget(self.play_pause_button)
+        # step 3. 将video_widget和video_button_and_slider_layout放入布局
+
+        self.video_layout.addWidget(self.view)
+        self.video_layout.addLayout(self.video_button_and_slider_layout)
+
+        self.splitter.addWidget(self.videoWidget)
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.fps = 30
+        self.fit_gap = 1
+
         self.setWindowTitle("Tabbed Interface - Map and Video Viewer")
 
         # 创建一个 QTabWidget
@@ -360,11 +552,11 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.tabs)
 
         # 创建 MapWidget 实例并将其添加为标签页
-        self.map_tab = MapWidget()
+        self.map_tab = MapWidget(self.fps, self.fit_gap)
         self.tabs.addTab(self.map_tab, "地图视图")
 
         # 创建另一个标签页
-        self.other_tab = VideoSvgWidget()
+        self.other_tab = VideoSvgWidget(self.fps, self.fit_gap)
         self.tabs.addTab(self.other_tab, "其他")
 
         self.showMaximized()

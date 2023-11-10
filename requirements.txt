@@ -1,3 +1,5 @@
 fitparse
 pandas
 PyQt5
+svgwrite
+cairosvg

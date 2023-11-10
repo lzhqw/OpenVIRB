@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 def create_speed_svg(curr_speed, max_speed):
     # 创建一个SVG绘图
-    dwg = svgwrite.Drawing('test.svg', size=(400, 200), profile='tiny')
+    dwg = svgwrite.Drawing('test.svg', size=(300, 200), profile='tiny')
 
     center_x = 100  # 弧形中心的X坐标
     center_y = 100  # 弧形中心的Y坐标
@@ -57,17 +57,17 @@ def create_speed_svg(curr_speed, max_speed):
 
 
 def create_power_svg(curr_power):
-    dwg = svgwrite.Drawing('test.svg', size=(400, 200))
-    svg_string = scale_and_offset_svg('imgs/哑铃1.svg', 0.18, (55, 40))
+    dwg = svgwrite.Drawing('test.svg', size=(250, 100))
+    svg_string = scale_and_offset_svg('imgs/哑铃1.svg', 0.18, (0, 0))
     path = dwg.path(d=svg_string, fill='white')
     dwg.add(path)
     # 加入速度
-    text = dwg.text("功率", insert=(160, 65), font_size="25px", font_family="新宋体", fill='white')
+    text = dwg.text("功率", insert=(105, 25), font_size="25px", font_family="新宋体", fill='white')
     dwg.add(text)
     # 加入当前速度
     if curr_power is None:
         curr_power = '--'
-    text = dwg.text(f"{curr_power} w", insert=(180, 110), font_size="30px", font_family="新宋体", fill='white')
+    text = dwg.text(f"{curr_power} w", insert=(135, 70), font_size="30px", font_family="新宋体", fill='white')
     dwg.add(text)
     # dwg.save()
     svg_data = dwg.tostring()
@@ -126,14 +126,28 @@ def add_png_to_frame(png_bytes, frame, x, y):
     return frame
 
 
-def align_video_frame_and_fit(aligned_video_time, aligned_fit_time, curr_video_frame_num, fit_gap, fps):
+def align_video_frame_and_fit(aligned_video_position, aligned_fit_position, curr_video_frame_num, fit_gap, fps):
     """
     对齐video的帧和fit中的数据点
+    计算过程中单位统一为s
     :return:
     """
     curr_frame_time = curr_video_frame_num / fps
-    frame_time_gap = curr_frame_time - aligned_video_time
-    curr_fit_time = aligned_fit_time + frame_time_gap
+    frame_time_gap = curr_frame_time - aligned_video_position / 1000
+    curr_fit_time = aligned_fit_position * fit_gap + frame_time_gap
+    curr_fit_point = int(curr_fit_time / fit_gap)
+    return curr_fit_point
+
+
+def align_video_positoin_and_fit(aligned_video_position, aligned_fit_position, curr_video_position, fit_gap, fps):
+    """
+    对齐video的帧和fit中的数据点
+    计算过程中单位统一为s
+    :return:
+    """
+    curr_frame_time = curr_video_position / 1000
+    frame_time_gap = curr_frame_time - aligned_video_position / 1000
+    curr_fit_time = aligned_fit_position * fit_gap + frame_time_gap
     curr_fit_point = int(curr_fit_time / fit_gap)
     return curr_fit_point
 
@@ -159,7 +173,8 @@ def add_fit_svg_to_frame(speed_png, power_png, frame):
     return frame
 
 
-def add_fit_data_to_video(input_video_path, fit_data, output_video_path, aligned_video_time, aligned_fit_time, fit_gap):
+def add_fit_data_to_video(input_video_path, fit_data, output_video_path, aligned_video_position, aligned_fit_position,
+                          fit_gap):
     cap = cv2.VideoCapture(input_video_path)
     if not cap.isOpened():
         print("Error: Could not open video.")
@@ -184,8 +199,8 @@ def add_fit_data_to_video(input_video_path, fit_data, output_video_path, aligned
             print("Reached the end of the video or an error occurred.")
             break
         # 先要计算一下当前帧对应fit_data的第几行
-        fit_row = align_video_frame_and_fit(aligned_video_time=aligned_video_time,
-                                            aligned_fit_time=aligned_fit_time,
+        fit_row = align_video_frame_and_fit(aligned_video_position=aligned_video_position,
+                                            aligned_fit_position=aligned_fit_position,
                                             fit_gap=fit_gap,
                                             fps=fps,
                                             curr_video_frame_num=frame_number)
@@ -204,16 +219,15 @@ def add_fit_data_to_video(input_video_path, fit_data, output_video_path, aligned
         frame_number += 1
     cap.release()
 
-
-from load_fit import load_fit, get_gps_data
-
-fit_data = load_fit('data/Lunch_Ride.fit')
-fit_data['speed'] = fit_data['speed'] * 3.6
-fit_data.to_csv('data/data.csv')
-
-add_fit_data_to_video(input_video_path='video/GH010288.mp4',
-                      fit_data=fit_data,
-                      output_video_path='video/output.mp4',
-                      aligned_fit_time=500,
-                      aligned_video_time=424.913,
-                      fit_gap=1)
+# from load_fit import load_fit, get_gps_data
+#
+# fit_data = load_fit('data/Lunch_Ride.fit')
+# fit_data['speed'] = fit_data['speed'] * 3.6
+# fit_data.to_csv('data/data.csv')
+#
+# add_fit_data_to_video(input_video_path='video/GH010288.mp4',
+#                       fit_data=fit_data,
+#                       output_video_path='video/output.mp4',
+#                       aligned_fit_time=500,
+#                       aligned_video_time=424.913,
+#                       fit_gap=1)
