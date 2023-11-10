@@ -5,13 +5,14 @@ from cv_func import create_power_svg, create_speed_svg, align_video_positoin_and
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QSlider, QApplication, QHBoxLayout, QPushButton, \
     QFileDialog, QSplitter, QTabWidget, QLabel, QGraphicsView, QGraphicsScene, QStackedLayout, QFrame
-from PyQt5.QtCore import Qt, QUrl, pyqtSlot, pyqtSignal, QObject, QPoint, QPointF
+from PyQt5.QtCore import Qt, QUrl, pyqtSlot, pyqtSignal, QObject, QByteArray, QPointF
 from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
 from PyQt5.QtMultimediaWidgets import QVideoWidget, QGraphicsVideoItem
 from PyQt5.QtGui import QPixmap, QColor, QBrush, QPainter, QTransform
 from PyQt5.QtSvg import QSvgWidget, QGraphicsSvgItem, QSvgRenderer
 import sys
 import os
+import inspect
 
 
 class Signals(QObject):
@@ -241,14 +242,53 @@ class ClicableSvgWidget(QSvgWidget):
     点击SVG图片的时候，在视频上添加预览
     """
 
+    def __init__(self, svg_func, data_type):
+        super().__init__()
+        self.svg_func = svg_func
+        self.data_type = data_type
+        self.load_svg()
+        self.setFixedSize(self.size())
+
+    def load_svg(self):
+        svg_string = self.svg_func()
+        svg_bytes = QByteArray(svg_string.encode('utf-8'))  # 将SVG字符串转换为字节数组
+        self.load(svg_bytes)  # 使用QSvgWidget的load方法加载SVG字节数组
+        self.resizeToMaxDimension()
+
     def mousePressEvent(self, event):
+        """
+        数遍左键单机时调用self.clicked函数
+        :param event:
+        :return:
+        """
         if event.button() == Qt.LeftButton:
             self.clicked()
 
     def clicked(self):
-        print("SVG图片被点击了！")
+        """
+        当点击的时候发送data_type信息
+        :return:
+        """
+        print(f"SVG图片 {self.data_type} 被点击了！")
         # 在这里添加你的事件触发逻辑
-        signals.add_svg_to_Video.emit("1")
+        signals.add_svg_to_Video.emit(self.data_type)
+
+    def resizeToMaxDimension(self, max_dimension=200):
+        svgSize = self.renderer().defaultSize()
+        # 确保原始尺寸不为零
+        if svgSize.width() == 0 or svgSize.height() == 0:
+            return
+        # 计算缩放比例
+        scale_width = max_dimension / svgSize.width()
+        scale_height = max_dimension / svgSize.height()
+        scale_factor = min(scale_width, scale_height)
+
+        # 应用缩放比例
+        newWidth = svgSize.width() * scale_factor
+        newHeight = svgSize.height() * scale_factor
+        # 调整svgPic的尺寸为缩放后的大小
+        self.resize(int(newWidth), int(newHeight))
+        self.show()
 
 
 class MyGraphicsView(QGraphicsView):
@@ -271,18 +311,6 @@ class MyGraphicsView(QGraphicsView):
 class DraggableSvgItem(QGraphicsSvgItem):
     def __init__(self):
         super(DraggableSvgItem, self).__init__()
-
-        # # 检查 svg_source 是 SVG 数据字符串还是文件路径
-        # if svg_source and svg_source.strip().startswith('<svg'):
-        #     # SVG 数据字符串
-        #     self.renderer = QSvgRenderer(svg_source.encode('utf-8'))
-        # elif svg_source and os.path.isfile(svg_source):
-        #     print(svg_source)
-        #     # 文件路径
-        #     self.renderer = QSvgRenderer(svg_source)
-        # else:
-        #     raise ValueError("svg_source must be SVG data string or a valid file path.")
-        # self.setSharedRenderer(self.renderer)
         self.setFlags(QGraphicsSvgItem.ItemIsSelectable | QGraphicsSvgItem.ItemIsMovable)
         self.isDragging = False
         self.startPos = QPointF()
@@ -361,6 +389,7 @@ class VideoSvgWidget(QWidget):
         self.signals.FitOpened.connect(self.open_fit_file)
         self.signals.align.connect(self.update_align)
         self.svg_in_view = {}
+        self.svg_in_widget = {}
         self.video_loaded = False
         self.fit_loaded = False
         self.initUI()
@@ -394,23 +423,13 @@ class VideoSvgWidget(QWidget):
         self.fit_loaded = True
 
     def create_svg(self):
-        self.svgPic = ClicableSvgWidget(self.svgWidget)
-        self.svgPic.load('imgs/哑铃2.svg')
-        svgSize = self.svgPic.renderer().defaultSize()
-        # 您想要缩放到的尺寸
-        max_dimension = 200
+        svgPic = ClicableSvgWidget(create_speed_svg, "speed")
+        self.svg_layout.addWidget(svgPic)
+        self.svg_in_widget["speed"] = svgPic
 
-        # 计算缩放比例
-        scale_width = max_dimension / svgSize.width()
-        scale_height = max_dimension / svgSize.height()
-        scale_factor = min(scale_width, scale_height)
-
-        # 应用缩放比例
-        newWidth = svgSize.width() * scale_factor
-        newHeight = svgSize.height() * scale_factor
-        # 调整svgPic的尺寸为缩放后的大小
-        self.svgPic.resize(int(newWidth), int(newHeight))
-        self.svgPic.show()
+        svgPic = ClicableSvgWidget(create_power_svg, "power")
+        self.svg_layout.addWidget(svgPic)
+        self.svg_in_widget["power"] = svgPic
 
     def setupSvgView(self):
         self.svgWidget = QWidget()
@@ -419,24 +438,34 @@ class VideoSvgWidget(QWidget):
         self.create_svg()
         self.splitter.addWidget(self.svgWidget)
 
-    def add_svg_to_video(self, svg_number):
+    def add_svg_to_video(self, data_type):
         try:
             if not self.video_loaded:
                 print("视频未导入")
                 return
             if not self.fit_loaded:
                 return
-            if svg_number not in self.svg_in_view.keys():
+            if data_type not in self.svg_in_view.keys():
                 fit_row = align_video_positoin_and_fit(aligned_video_position=self.video_slider_position,
                                                        aligned_fit_position=self.map_slider_position,
                                                        fit_gap=self.fit_gap,
                                                        fps=self.fps,
                                                        curr_video_position=self.video_slider.value())
-                print(fit_row)
-                svgItem = DynamicSvgItem(svg_func=create_power_svg,
-                                         data=list(self.fit_data['power']),
-                                         init_row=fit_row)
-                self.svg_in_view[svg_number] = svgItem
+                svg_func = self.svg_in_widget[data_type].svg_func
+                data = list(self.fit_data[data_type])
+                parameters = inspect.signature(svg_func).parameters
+                param_names = [param.name for param in parameters.values()]
+                if len(param_names) > 1:
+                    max_data = {param_names[-1]: max(data)}
+                    svgItem = DynamicSvgItem(svg_func=svg_func,
+                                             data=data,
+                                             init_row=fit_row,
+                                             **max_data)
+                else:
+                    svgItem = DynamicSvgItem(svg_func=svg_func,
+                                             data=list(self.fit_data[data_type]),
+                                             init_row=fit_row)
+                self.svg_in_view[data_type] = svgItem
                 scaleFactor = 0.5  # 举例为原始SVG尺寸的50%
                 svgItem.setScale(scaleFactor)
                 svgItem.setPos(500, 500)
@@ -553,11 +582,11 @@ class MainWindow(QMainWindow):
 
         # 创建 MapWidget 实例并将其添加为标签页
         self.map_tab = MapWidget(self.fps, self.fit_gap)
-        self.tabs.addTab(self.map_tab, "地图视图")
+        self.tabs.addTab(self.map_tab, "地图")
 
         # 创建另一个标签页
         self.other_tab = VideoSvgWidget(self.fps, self.fit_gap)
-        self.tabs.addTab(self.other_tab, "其他")
+        self.tabs.addTab(self.other_tab, "模板")
 
         self.showMaximized()
 
