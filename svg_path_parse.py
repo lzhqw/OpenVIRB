@@ -1,5 +1,7 @@
 import xml.etree.ElementTree as ET
 import re
+import os
+from lxml import etree
 
 
 def extract_path_d_attribute(svg_file_path):
@@ -12,6 +14,9 @@ def extract_path_d_attribute(svg_file_path):
         path.attrib['d'] for path in root.findall('.//{http://www.w3.org/2000/svg}path')
     ]
     return path_d_attributes[0]
+
+
+
 
 
 def convert_str_to_num(s):
@@ -46,8 +51,8 @@ def parse_svg_path_data(svg_file_path):
     return parsed_data.strip()
 
 
-def scale_and_offset_svg(svg_file_path, scale_factor=1, offset_vector=(0, 0)):
-    path_data = extract_path_d_attribute(svg_file_path)
+def scale_and_offset_svg(input_data, scale_factor=1, offset_vector=(0, 0)):
+    path_data = extract_path_d_attribute(input_data)  # input_data 是文件路径
     path_segments = re.findall('[MmLlHhVvCcSsQqTtAa][^MmLlHhVvCcSsQqTtAaZz]*|Z', path_data)
     svg_string = ''
     for segment in path_segments:

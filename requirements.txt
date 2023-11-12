@@ -3,3 +3,6 @@ pandas
 PyQt5
 svgwrite
 cairosvg
+opencv-python
+numpy
+tqdm

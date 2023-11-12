@@ -1,14 +1,15 @@
 import json
 from load_fit import load_fit, get_gps_data
-from cv_func import create_power_svg, create_speed_svg, align_video_positoin_and_fit
+from cv_func import create_power_svg, create_speed_svg, align_video_positoin_and_fit, add_fit_data_to_video
 # PyQt5 imports
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QSlider, QApplication, QHBoxLayout, QPushButton, \
-    QFileDialog, QSplitter, QTabWidget, QLabel, QGraphicsView, QGraphicsScene, QStackedLayout, QFrame
+    QFileDialog, QSplitter, QTabWidget, QToolBar, QGraphicsView, QGraphicsScene, QSpacerItem, QSizePolicy, \
+    QProgressDialog
 from PyQt5.QtCore import Qt, QUrl, pyqtSlot, pyqtSignal, QObject, QByteArray, QPointF
 from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
 from PyQt5.QtMultimediaWidgets import QVideoWidget, QGraphicsVideoItem
-from PyQt5.QtGui import QPixmap, QColor, QBrush, QPainter, QTransform
+from PyQt5.QtGui import QIcon, QTransform
 from PyQt5.QtSvg import QSvgWidget, QGraphicsSvgItem, QSvgRenderer
 import sys
 import os
@@ -23,6 +24,15 @@ class Signals(QObject):
 
 
 signals = Signals()
+
+
+class exportSignals(QObject):
+    videoSize = pyqtSignal(float, float)
+    svgSize = pyqtSignal(dict)
+    svgPos = pyqtSignal(dict)
+
+
+export_signals = exportSignals()
 
 
 class MapWidget(QWidget):
@@ -47,7 +57,6 @@ class MapWidget(QWidget):
         self.setupMapView()
         self.setupVideoPlayer()
         self.main_layout.addWidget(self.splitter)
-        self.showMaximized()
         self.splitter.setSizes([self.width() // 2, self.width() // 2])
 
     def setupWindowAndLayout(self):
@@ -288,7 +297,7 @@ class ClicableSvgWidget(QSvgWidget):
         newHeight = svgSize.height() * scale_factor
         # 调整svgPic的尺寸为缩放后的大小
         self.resize(int(newWidth), int(newHeight))
-        self.show()
+        # self.show()
 
 
 class MyGraphicsView(QGraphicsView):
@@ -314,7 +323,9 @@ class DraggableSvgItem(QGraphicsSvgItem):
         self.setFlags(QGraphicsSvgItem.ItemIsSelectable | QGraphicsSvgItem.ItemIsMovable)
         self.isDragging = False
         self.startPos = QPointF()
-        self.currentScale = 1.0  # 初始缩放比例
+        self.currentScale = 0.5  # 初始缩放比例
+        transform = QTransform().scale(self.currentScale, self.currentScale)
+        self.setTransform(transform)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -369,11 +380,31 @@ class DynamicSvgItem(DraggableSvgItem):
 
     def updateSvg(self, curr_row):
         # 使用svg_func生成新的SVG字符串并加载
-        svg_data = self.svg_func(self.data[curr_row], **self.kwargs)
+        svg_data = self.svg_func(self.data.iloc[curr_row], **self.kwargs)
         self.renderer = QSvgRenderer()
         self.renderer.load(svg_data.encode('utf-8'))
         self.setSharedRenderer(self.renderer)
         self.update()  # 更新视图
+
+
+def param_wrapper(svg_func, data_frame, data_type):
+    # 获取函数需要的参数名
+    params = inspect.signature(svg_func).parameters
+    param_names = list(params.keys())
+
+    # 建立参数映射
+    args = {}
+    for name in param_names:
+        if name == 'max_data':
+            args[name] = data_frame[data_type].max()  # 当前data_type列的最大值
+        elif name == 'min_data':
+            args[name] = data_frame[data_type].min()  # 当前data_type列的最小值
+        elif name == 'all_data':
+            args[name] = data_frame[data_type].values  # 当前data_type列的所有数据
+        # 可以根据需要添加更多条件
+
+    # 调用函数并传入参数
+    return args
 
 
 class VideoSvgWidget(QWidget):
@@ -390,6 +421,7 @@ class VideoSvgWidget(QWidget):
         self.signals.align.connect(self.update_align)
         self.svg_in_view = {}
         self.svg_in_widget = {}
+        self.data_type_svg_func_dict = {}
         self.video_loaded = False
         self.fit_loaded = False
         self.initUI()
@@ -399,7 +431,6 @@ class VideoSvgWidget(QWidget):
         self.setupSvgView()
         self.setupVideoPlayer()
         self.main_layout.addWidget(self.splitter)
-        self.showMaximized()
         self.splitter.setSizes([self.width() // 2, self.width() // 2])
 
     def setupWindowAndLayout(self):
@@ -452,23 +483,17 @@ class VideoSvgWidget(QWidget):
                                                        fps=self.fps,
                                                        curr_video_position=self.video_slider.value())
                 svg_func = self.svg_in_widget[data_type].svg_func
-                data = list(self.fit_data[data_type])
-                parameters = inspect.signature(svg_func).parameters
-                param_names = [param.name for param in parameters.values()]
-                if len(param_names) > 1:
-                    max_data = {param_names[-1]: max(data)}
-                    svgItem = DynamicSvgItem(svg_func=svg_func,
-                                             data=data,
-                                             init_row=fit_row,
-                                             **max_data)
-                else:
-                    svgItem = DynamicSvgItem(svg_func=svg_func,
-                                             data=list(self.fit_data[data_type]),
-                                             init_row=fit_row)
+                args = param_wrapper(svg_func=svg_func,
+                                     data_frame=self.fit_data,
+                                     data_type=data_type)
+
+                svgItem = DynamicSvgItem(svg_func=svg_func,
+                                         data=self.fit_data[data_type],
+                                         init_row=fit_row,
+                                         **args)
                 self.svg_in_view[data_type] = svgItem
-                scaleFactor = 0.5  # 举例为原始SVG尺寸的50%
-                svgItem.setScale(scaleFactor)
-                svgItem.setPos(500, 500)
+                self.data_type_svg_func_dict[data_type] = svg_func
+                svgItem.setPos(0, 500)
                 self.scene.addItem(svgItem)
         except Exception as e:
             raise Exception(e)
@@ -549,7 +574,6 @@ class VideoSvgWidget(QWidget):
         self.video_player.durationChanged.connect(self.durationChanged)
         self.create_VideoSlider()
         self.create_play_pause_button()
-
         self.scene.addItem(self.videoItem)
 
         # 创建视图来显示场景
@@ -573,9 +597,11 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.fps = 30
         self.fit_gap = 1
+        self.signals = signals
+        self.signals.videoOpened.connect(self.get_video_path)
 
         self.setWindowTitle("Tabbed Interface - Map and Video Viewer")
-
+        self.set_menu_bar()
         # 创建一个 QTabWidget
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
@@ -589,6 +615,108 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.other_tab, "模板")
 
         self.showMaximized()
+
+    def get_video_path(self, filePath):
+        self.video_path = filePath
+
+    def set_menu_bar(self):
+        self.toolbar = QToolBar("My Toolbar", self)
+        self.addToolBar(self.toolbar)
+
+        # 创建一个水平布局
+        toolbarLayout = QHBoxLayout()
+
+        # 添加一个弹簧来推动按钮到右侧
+        spacer = QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum)
+        toolbarLayout.addSpacerItem(spacer)
+
+        # 创建按钮并设置图标
+        btn = QPushButton(self)
+        btn.setIcon(QIcon('imgs/export.png'))  # 替换为你的图标路径
+        btn.setMaximumSize(40, 40)  # 调整为所需的尺寸
+        btn.clicked.connect(self.export)
+
+        toolbarLayout.addWidget(btn)
+
+        # 创建一个容器部件并设置布局
+        container = QWidget()
+        container.setLayout(toolbarLayout)
+
+        # 将容器部件添加到工具栏
+        self.toolbar.addWidget(container)
+
+    def export(self):
+        progressDialog = QProgressDialog("Processing video...", "Cancel", 0, 100, self)
+        progressDialog.setModal(True)
+        progressDialog.show()
+
+        def update_progress(frame_number, total_frames):
+            progress = int((frame_number / total_frames) * 100)
+            progressDialog.setValue(progress)
+            QApplication.processEvents()
+
+            if progressDialog.wasCanceled():
+                return False  # 或者处理取消操作
+
+        sceneRect = self.other_tab.scene.sceneRect()
+        sceneWidth = sceneRect.width()
+        sceneHeight = sceneRect.height()
+
+        # print(viewWidth, viewHeight, viewSize)
+        print(sceneWidth, sceneHeight)
+
+        # 1. 获取到视频大小
+        position = self.other_tab.videoItem.pos()
+        video_x = position.x()
+        video_y = position.y()
+        boundingRect = self.other_tab.videoItem.boundingRect()
+        videoWidth = boundingRect.width()
+        videoHeight = boundingRect.height()
+
+        video_y = video_y + (sceneHeight - videoHeight) // 2
+
+        data_type_position_dict = {}
+        sizes = {}
+        # 2. 获取到每个svg的大小和位置
+        for data_type, svgItem in self.other_tab.svg_in_view.items():
+            scale_factor = svgItem.currentScale
+            print(scale_factor)
+
+            boundingRect = svgItem.boundingRect()
+            svgWidth = boundingRect.width() * scale_factor
+            svgHeight = boundingRect.height() * scale_factor
+
+            position = svgItem.pos()
+            svg_x = position.x()
+            svg_y = position.y()
+
+            print(videoWidth, videoHeight)
+            print(video_x, video_y)
+            print(svg_x, svg_y)
+            print(svgWidth, svgHeight)
+
+            # 3. 计算svg在视频上的位置，并生成data_type_positoin_dict和sizes两个字典
+            relativeX = (svg_x - video_x) / videoWidth
+            relativeY = (svg_y - video_y) / videoHeight
+
+            print(relativeX, relativeY)
+            print((svgWidth / videoWidth, svgHeight / videoHeight))
+
+            data_type_position_dict[data_type] = (relativeX, relativeY)
+            sizes[data_type] = (svgWidth / videoWidth, svgHeight / videoHeight)
+
+        # 4. 导出视频
+        add_fit_data_to_video(input_video_path=self.video_path,
+                              fit_data=self.other_tab.fit_data,
+                              output_video_path='video/output.mp4',
+                              aligned_video_position=self.map_tab.video_slider_position,
+                              aligned_fit_position=self.map_tab.map_slider_position,
+                              fit_gap=self.fit_gap,
+                              data_type_svg_func_dict=self.other_tab.data_type_svg_func_dict,
+                              data_type_position_dict=data_type_position_dict,
+                              sizes=sizes,
+                              progress_callback=update_progress)
+        progressDialog.close()
 
 
 # Set up the application and window

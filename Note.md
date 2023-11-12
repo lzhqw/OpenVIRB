@@ -38,3 +38,12 @@ self.map_view.page().runJavaScript(code)
 
 #### 函数关联
 
+
+
+
+
+
+
+
+ClicableSvgWidget 中的 self.show()会导致初始化时弹窗
+多个self.showMaximized()会导致闪烁

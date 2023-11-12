@@ -5,11 +5,12 @@ import numpy as np
 from math import pi, sin, cos
 from svg_path_parse import scale_and_offset_svg
 from tqdm import tqdm
+import inspect
 
 
-def create_speed_svg(curr_speed, max_speed):
+def create_speed_svg(curr_speed=None, max_data=None):
     # 创建一个SVG绘图
-    dwg = svgwrite.Drawing('test.svg', size=(300, 200), profile='tiny')
+    dwg = svgwrite.Drawing('test.svg', size=(350, 200), profile='tiny')
 
     center_x = 100  # 弧形中心的X坐标
     center_y = 100  # 弧形中心的Y坐标
@@ -34,7 +35,7 @@ def create_speed_svg(curr_speed, max_speed):
     if curr_speed is None:
         angle = -120
     else:
-        angle = -120 + curr_speed / max_speed * 240
+        angle = -120 + curr_speed / max_data * 240
     rad = angle * pi / 180
     end_x = center_x + (radius - 5) * sin(rad)
     end_y = center_y - (radius - 5) * cos(rad)
@@ -56,7 +57,7 @@ def create_speed_svg(curr_speed, max_speed):
     return svg_data
 
 
-def create_power_svg(curr_power):
+def create_power_svg(curr_power=None):
     dwg = svgwrite.Drawing('test.svg', size=(250, 100))
     svg_string = scale_and_offset_svg('imgs/哑铃1.svg', 0.18, (0, 0))
     path = dwg.path(d=svg_string, fill='white')
@@ -91,11 +92,16 @@ def convert_svg_to_png(svg_data):
     return png_image
 
 
-def add_png_to_frame(png_bytes, frame, x, y):
+def add_png_to_frame(png_bytes, frame, x, y, size=None):
     # 将字节数据转换为numpy数组
     png_array = np.frombuffer(png_bytes, dtype=np.uint8)
     # 通过cv2.imdecode读取数组，得到图像
     png_img = cv2.imdecode(png_array, cv2.IMREAD_UNCHANGED)
+
+    # 调整图片大小
+    if size is not None:
+        png_img = cv2.resize(png_img, size, interpolation=cv2.INTER_AREA)
+
     # 获取png图片的宽高
     png_height, png_width = png_img.shape[:2]
 
@@ -113,13 +119,20 @@ def add_png_to_frame(png_bytes, frame, x, y):
     y1, y2 = y, y + png_height
     x1, x2 = x, x + png_width
 
+    # 确保叠加区域不超出frame的边界
+    y2 = min(y2, frame.shape[0])
+    x2 = min(x2, frame.shape[1])
+
+    # 裁剪png_color和alpha_mask以匹配ROI的尺寸
+    png_color = png_color[:y2 - y1, :x2 - x1]
+    alpha_mask = alpha_mask[:y2 - y1, :x2 - x1]
+
     # 叠加区域的ROI
     roi = frame[y1:y2, x1:x2]
 
     # 根据alpha值混合图片
     for c in range(0, 3):
-        roi[:, :, c] = (alpha_mask * png_color[:, :, c] +
-                        (1 - alpha_mask) * roi[:, :, c])
+        roi[:, :, c] = alpha_mask * png_color[:, :, c] + (1 - alpha_mask) * roi[:, :, c]
 
     # 将修改后的ROI放回原视频帧
     frame[y1:y2, x1:x2] = roi
@@ -152,29 +165,63 @@ def align_video_positoin_and_fit(aligned_video_position, aligned_fit_position, c
     return curr_fit_point
 
 
-def generate_fit_png(fit_data, frame):
+def param_wrapper(svg_func, data_frame, data_type):
+    # 获取函数需要的参数名
+    params = inspect.signature(svg_func).parameters
+    param_names = list(params.keys())
+
+    # 建立参数映射
+    args = {}
+    for name in param_names:
+        if name == 'max_data':
+            args[name] = data_frame[data_type].max()  # 当前data_type列的最大值
+        elif name == 'min_data':
+            args[name] = data_frame[data_type].min()  # 当前data_type列的最小值
+        elif name == 'all_data':
+            args[name] = data_frame[data_type].values  # 当前data_type列的所有数据
+        # 可以根据需要添加更多条件
+
+    # 调用函数并传入参数
+    return args
+
+
+def generate_fit_png(fit_data, fit_row, data_type_svg_func_dict, scales=None):
     # Index(['altitude', 'cadence', 'distance', 'enhanced_altitude',
     #        'enhanced_speed', 'heart_rate', 'position_lat', 'position_long',
     #        'power', 'speed', 'temperature', 'timestamp'],
     #       dtype='object')
-    speed = fit_data['speed']
-    max_speed = 60
-    power = fit_data['power']
-    speed_svg_string = create_speed_svg(speed, max_speed)
-    power_svg_string = create_power_svg(power)
-    speed_png = convert_svg_to_png(speed_svg_string)
-    power_png = convert_svg_to_png(power_svg_string)
-    return speed_png, power_png
+    data_type_png_dict = {}
+    if fit_row < 0 or fit_row >= len(fit_data) - 1:
+        for data_type, svg_func in data_type_svg_func_dict.items():
+            svg_string = svg_func()
+            data_type_png_dict[data_type] = convert_svg_to_png(svg_string)
+    else:
+        for data_type, svg_func in data_type_svg_func_dict.items():
+            args = param_wrapper(svg_func, fit_data, data_type)
+            svg_string = svg_func(fit_data.loc[fit_row, data_type], **args)
+            data_type_png_dict[data_type] = convert_svg_to_png(svg_string)
+    return data_type_png_dict
 
 
-def add_fit_svg_to_frame(speed_png, power_png, frame):
-    frame = add_png_to_frame(speed_png, frame, 100, 600)
-    frame = add_png_to_frame(power_png, frame, 150, 700)
+def add_fit_svg_to_frame(data_type_png_dict, frame, data_type_position_dict=None, sizes=None):
+    if data_type_position_dict is None:
+        x = 100
+        y = 600
+        for data_type, png in data_type_png_dict.items():
+            frame = add_png_to_frame(png, frame, x, y, sizes[data_type])
+            x += 50
+            y += 200
+    else:
+        for data_type, png in data_type_png_dict.items():
+            x, y = data_type_position_dict[data_type]
+            frame = add_png_to_frame(png, frame, x, y, sizes[data_type])
+
     return frame
 
 
 def add_fit_data_to_video(input_video_path, fit_data, output_video_path, aligned_video_position, aligned_fit_position,
-                          fit_gap):
+                          fit_gap, data_type_svg_func_dict, data_type_position_dict=None, sizes=None,
+                          progress_callback=None):
     cap = cv2.VideoCapture(input_video_path)
     if not cap.isOpened():
         print("Error: Could not open video.")
@@ -184,6 +231,13 @@ def add_fit_data_to_video(input_video_path, fit_data, output_video_path, aligned
     # 获取视频的大小（宽度和高度）
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    # 将相对位置和大小改成绝对位置和大小
+    data_type_position_dict = {key: (int(value[0] * frame_width), int(value[1] * frame_height)) for key, value in
+                               data_type_position_dict.items()}
+    sizes = {key: (int(value[0] * frame_width), int(value[1] * frame_height)) for key, value in sizes.items()}
+
+    print(data_type_position_dict, sizes)
     # 获取视频总帧数
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     # 定义视频编码器
@@ -194,6 +248,8 @@ def add_fit_data_to_video(input_video_path, fit_data, output_video_path, aligned
     frame_number = 0
     fit_row_preview = -1
     for frame_number in tqdm(range(total_frames), desc="Processing video"):
+        if progress_callback is not None:
+            progress_callback(frame_number, total_frames)
         ret, frame = cap.read()
         if not ret:
             print("Reached the end of the video or an error occurred.")
@@ -207,16 +263,19 @@ def add_fit_data_to_video(input_video_path, fit_data, output_video_path, aligned
 
         if fit_row != fit_row_preview:
             fit_row_preview = fit_row
-            if fit_row < 0 or fit_row >= len(fit_data) - 1:
-                speed_png, power_png = generate_fit_png({"speed": None, "power": None}, frame)
-            else:
-                speed_png, power_png = generate_fit_png(dict(fit_data.loc[fit_row, :]), frame)
-
-        frame = add_fit_svg_to_frame(speed_png, power_png, frame)
+            data_type_png_dict = generate_fit_png(fit_data=fit_data,
+                                                  data_type_svg_func_dict=data_type_svg_func_dict,
+                                                  fit_row=fit_row)
+        frame = add_fit_svg_to_frame(data_type_png_dict,
+                                     frame,
+                                     data_type_position_dict=data_type_position_dict,
+                                     sizes=sizes)
 
         out.write(frame)
         # 更新帧号
         frame_number += 1
+        if frame_number == 600:
+            break
     cap.release()
 
 # from load_fit import load_fit, get_gps_data
@@ -224,10 +283,14 @@ def add_fit_data_to_video(input_video_path, fit_data, output_video_path, aligned
 # fit_data = load_fit('data/Lunch_Ride.fit')
 # fit_data['speed'] = fit_data['speed'] * 3.6
 # fit_data.to_csv('data/data.csv')
+# data_type_svg_func_dict = {
+#     "speed": create_speed_svg,
+#     "power": create_power_svg
+# }
 #
 # add_fit_data_to_video(input_video_path='video/GH010288.mp4',
 #                       fit_data=fit_data,
 #                       output_video_path='video/output.mp4',
-#                       aligned_fit_time=500,
-#                       aligned_video_time=424.913,
+#                       aligned_fit_position=0,
+#                       aligned_video_position=0,
 #                       fit_gap=1)
