@@ -379,8 +379,12 @@ class DynamicSvgItem(DraggableSvgItem):
         self.updateSvg(init_row)  # 使用svg_func初始化
 
     def updateSvg(self, curr_row):
+        print(curr_row)
+        if curr_row < 0 or curr_row >= len(self.data):
+            svg_data = self.svg_func(None, **self.kwargs)
         # 使用svg_func生成新的SVG字符串并加载
-        svg_data = self.svg_func(self.data.iloc[curr_row], **self.kwargs)
+        else:
+            svg_data = self.svg_func(self.data.iloc[curr_row], **self.kwargs)
         self.renderer = QSvgRenderer()
         self.renderer.load(svg_data.encode('utf-8'))
         self.setSharedRenderer(self.renderer)
@@ -477,11 +481,13 @@ class VideoSvgWidget(QWidget):
             if not self.fit_loaded:
                 return
             if data_type not in self.svg_in_view.keys():
+                print(self.video_slider_position, self.map_slider_position)
                 fit_row = align_video_positoin_and_fit(aligned_video_position=self.video_slider_position,
                                                        aligned_fit_position=self.map_slider_position,
                                                        fit_gap=self.fit_gap,
                                                        fps=self.fps,
                                                        curr_video_position=self.video_slider.value())
+                print(fit_row)
                 svg_func = self.svg_in_widget[data_type].svg_func
                 args = param_wrapper(svg_func=svg_func,
                                      data_frame=self.fit_data,
